@@ -74,7 +74,15 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         val root = rootInActiveWindow ?: return
         if (root.packageName == packageName) return
         val lines = ArrayList<String>().also { collect(root, it) }
-        val fresh = lines.filter { seen.add(it) }
+        // Streaming messages grow in place: if a line extends one we already spoke, say only the new tail.
+        val fresh = ArrayList<String>()
+        for (l in lines) {
+            if (l in seen) continue
+            val prev = seen.filter { it.length > 25 && l.startsWith(it) }.maxByOrNull { it.length }
+            seen.add(l)
+            val tail = if (prev != null) l.substring(prev.length).trim() else l
+            if (tail.isNotEmpty()) fresh.add(tail)
+        }
         if (!primed) { primed = true; return }          // first look: just mark what's there
         if (!Prefs.read || !ttsReady || fresh.isEmpty()) { maybeListen(); return }
         // Skip short UI chrome (buttons/labels): only speak things that look like sentences.
@@ -84,8 +92,15 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     }
 
     private fun speak(s: String) {
-        speaking++
-        tts?.speak(s.take(3500), TextToSpeech.QUEUE_ADD, null, "u${System.nanoTime()}")
+        // TTS has a ~4000 char limit per utterance: chunk on sentence-ish boundaries.
+        var rest = s
+        while (rest.isNotEmpty()) {
+            val cut = if (rest.length <= 3000) rest.length
+                else rest.lastIndexOfAny(charArrayOf('.', '\n', '!', '?'), 3000).let { if (it < 500) 3000 else it + 1 }
+            speaking++
+            tts?.speak(rest.substring(0, cut), TextToSpeech.QUEUE_ADD, null, "u${System.nanoTime()}")
+            rest = rest.substring(cut).trim()
+        }
     }
 
     fun resync() {
