@@ -141,9 +141,43 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         if (n == null || !n.isVisibleToUser) return
         if (!n.isEditable) {
             val t = n.text?.toString()?.trim()
-            if (!t.isNullOrEmpty() && t.length > 1) out.add(t)
+            if (!t.isNullOrEmpty() && t.length > 1 && !(Prefs.chatOnly && looksLikeToolLine(n, t))) out.add(t)
         }
         for (i in 0 until n.childCount) collect(n.getChild(i), out)
+    }
+
+    private val toolStart = Regex("""(?i)^(ran|run|running|read|reading|edit|edited|editing|write|wrote|writing|bash|grep|glob|search(ed|ing)?|fetch(ed|ing)?|list(ed|ing)?|used|using|called|calling|tool|exit code|pushed to|committed|\$ |> |mcp__|task |todo|worked for|loaded|loading|updated|created|deleted|added|checking|checked)\b""")
+    private val cmdStart = Regex("""^(git|gh|gradle|\./gradlew|npm|npx|yarn|cd|ls|cat|sed|awk|python3?|pip3?|curl|wget|sleep|echo|mkdir|rm|mv|cp|rg|find|sh|bash|sudo|apt|export|chmod|tail|head|diff|grep|until|for|while|if)\s""")
+
+    /** Heuristic: is this a tool call / command / status row rather than a chat message? */
+    private fun looksLikeToolLine(n: AccessibilityNodeInfo, t: String): Boolean {
+        if (toolStart.containsMatchIn(t) && t.length < 400) return true
+        if (cmdStart.containsMatchIn(t)) return true
+        if (t.contains("&&") || t.contains(" | ") || t.contains("--") && t.length < 200 && !t.contains(". ")) return true
+        val words = t.split(Regex("\\s+"))
+        if (t.count { it == '/' } >= 2 && words.size < 8) return true          // path-ish
+        val odd = t.count { !it.isLetterOrDigit() && !it.isWhitespace() && it !in ".,'!?:;-()\"" }
+        if (t.length > 12 && odd * 100 / t.length > 20) return true            // symbol soup: code / diffs
+        if (n.isClickable && t.length < 160 && !t.trimEnd().endsWith(".") ) return true  // collapsible tool rows
+        return false
+    }
+
+    private fun dump(n: AccessibilityNodeInfo?, sb: StringBuilder, depth: Int) {
+        if (n == null || sb.length > 14000) return
+        val cls = n.className?.toString()?.substringAfterLast('.') ?: "?"
+        val txt = (n.text?.toString() ?: n.contentDescription?.toString() ?: "").replace('\n', ' ').take(100)
+        val fl = (if (n.isClickable) "c" else "") + (if (n.isEditable) "e" else "") + (if (!n.isVisibleToUser) "h" else "")
+        if (txt.isNotEmpty() || n.childCount == 0)
+            sb.append("  ".repeat(depth)).append(cls).append('[').append(fl).append(']').append(n.viewIdResourceName ?: "").append(' ').append(txt).append('\n')
+        for (i in 0 until n.childCount) dump(n.getChild(i), sb, depth + 1)
+    }
+
+    fun copyDump() {
+        val sb = StringBuilder()
+        dump(rootInActiveWindow, sb, 0)
+        val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        cm.setPrimaryClip(android.content.ClipData.newPlainText("screen", sb.toString()))
+        android.widget.Toast.makeText(this, "Screen dump copied (${sb.length} chars)", android.widget.Toast.LENGTH_SHORT).show()
     }
 
     private fun process() {
@@ -385,6 +419,8 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
             btn({ "Resync" }) { resync() },
             btn({ "Clear draft" }) { pending.setLength(0); setField("") })
         row(btn({ "\u21BB Repeat" }) { repeatLast() })
+        row(btn({ if (Prefs.chatOnly) "Chat only: on" else "Chat only: off" }) { Prefs.chatOnly = !Prefs.chatOnly; Prefs.save(ctx) },
+            btn({ "Copy screen dump" }) { copyDump() })
         row(btn({ if (Prefs.listen) "Mic: on" else "Mic: off" }) {
                 Prefs.listen = !Prefs.listen; if (Prefs.listen) maybeListen() else stopListening(); refresh() },
             btn({ if (Prefs.read) "Read: on" else "Read: off" }) {

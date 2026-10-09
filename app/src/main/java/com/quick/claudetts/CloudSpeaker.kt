@@ -124,6 +124,23 @@ class CloudSpeaker(
     }
 
     companion object {
+        /** Voices your ElevenLabs account can use through the API (premade / your own), name -> id. */
+        fun fetchElevenVoices(): Map<String, String> {
+            val c = URL("https://api.elevenlabs.io/v1/voices").openConnection() as HttpURLConnection
+            c.connectTimeout = 15000; c.readTimeout = 20000
+            c.setRequestProperty("xi-api-key", Prefs.elevenKey)
+            if (c.responseCode != 200) throw RuntimeException("HTTP ${c.responseCode}: " + (c.errorStream ?: c.inputStream).bufferedReader().readText().take(150))
+            val arr = JSONObject(c.inputStream.bufferedReader().readText()).getJSONArray("voices")
+            val out = LinkedHashMap<String, String>()
+            for (i in 0 until arr.length()) {
+                val v = arr.getJSONObject(i)
+                val cat = v.optString("category")
+                if (cat == "professional" || cat == "shared" || cat == "library") continue   // paid-only via API
+                out[v.getString("name").substringBefore(" -")] = v.getString("voice_id")
+            }
+            return out
+        }
+
         /** Names of models that mention "tts" (for debugging a wrong model name). */
         fun listTtsModels(): String {
             val c = URL("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200").openConnection() as HttpURLConnection

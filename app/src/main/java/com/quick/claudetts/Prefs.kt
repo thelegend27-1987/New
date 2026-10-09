@@ -5,7 +5,7 @@ import android.content.Context
 object Prefs {
     const val DEFAULT_ELEVEN_VOICE = "21m00Tcm4TlvDq8ikWAM" // Rachel (premade)
     // Premade ElevenLabs voices for the bubble's voice button: name -> id
-    val elevenVoices = linkedMapOf(
+    @Volatile var elevenVoices: Map<String, String> = linkedMapOf(
         "Rachel" to "21m00Tcm4TlvDq8ikWAM", "Sarah" to "EXAVITQu4vr4xnSDxMaL", "Brian" to "nPczCjzI2devNBz1zQrb",
         "Adam" to "pNInz6obpgDQGcFmaJgB", "George" to "JBFqnCBsd6RMkjVDRZzb", "Laura" to "FGY2WhTYpPnrIDTdsKH5",
         "Aria" to "9BWtsMINqrJLrRacOk9x", "Charlie" to "IKne3meq5aSn9XLyUdCD", "Lily" to "pFZP5JQG7iQjIQuC4Bku"
@@ -18,6 +18,7 @@ object Prefs {
     @Volatile var geminiKey = ""
     @Volatile var geminiVoice = "Kore"
     @Volatile var geminiModel = "gemini-2.5-flash-preview-tts"
+    @Volatile var chatOnly = true
     @Volatile var read = true
     @Volatile var listen = true
     @Volatile var rate = 1.2f
@@ -41,6 +42,12 @@ object Prefs {
         elevenKey = p.getString("ek", "") ?: ""
         elevenVoice = p.getString("ev", DEFAULT_ELEVEN_VOICE) ?: DEFAULT_ELEVEN_VOICE
         elevenModel = p.getString("em", "eleven_flash_v2_5") ?: "eleven_flash_v2_5"
+        chatOnly = p.getBoolean("co", true)
+        p.getString("evl", null)?.takeIf { it.isNotBlank() }?.let { s ->
+            val m = LinkedHashMap<String, String>()
+            s.split('|').forEach { e -> val i = e.lastIndexOf(':'); if (i > 0) m[e.substring(0, i)] = e.substring(i + 1) }
+            if (m.isNotEmpty()) elevenVoices = m
+        }
         engine = p.getString("eng", null) ?: if (elevenKey.isNotEmpty()) "eleven" else if (geminiKey.isNotEmpty()) "gemini" else "phone"
     }
 
@@ -48,6 +55,7 @@ object Prefs {
         c.getSharedPreferences("p", 0).edit()
             .putString("gk", geminiKey).putString("gv", geminiVoice).putString("gm", geminiModel)
             .putString("ek", elevenKey).putString("ev", elevenVoice).putString("em", elevenModel)
-            .putString("eng", engine).apply()
+            .putString("eng", engine).putBoolean("co", chatOnly)
+            .putString("evl", elevenVoices.entries.joinToString("|") { it.key.replace(':', ' ').replace('|', ' ') + ":" + it.value }).apply()
     }
 }

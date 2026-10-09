@@ -50,6 +50,21 @@ class MainActivity : Activity() {
         val gKey = field("Gemini API key", Prefs.geminiKey)
         val gVoice = field("Gemini voice name (Kore, Puck, Charon, Aoede...)", Prefs.geminiVoice)
         val gModel = field("Gemini model", Prefs.geminiModel)
+        val vstatus = TextView(this).apply { setTextColor(Color.YELLOW) }
+        fun loadVoices() {
+            if (Prefs.elevenKey.isBlank()) { vstatus.text = "Save an ElevenLabs key first"; return }
+            vstatus.text = "Loading your ElevenLabs voices..."
+            Thread {
+                try {
+                    val v = CloudSpeaker.fetchElevenVoices()
+                    if (v.isEmpty()) { runOnUiThread { vstatus.text = "No usable voices on this account. Add voices to My Voices on elevenlabs.io" }; return@Thread }
+                    Prefs.elevenVoices = v
+                    if (Prefs.elevenVoice !in v.values) { Prefs.elevenVoice = v.values.first(); runOnUiThread { eVoice.setText(Prefs.elevenVoice) } }
+                    Prefs.save(this)
+                    runOnUiThread { vstatus.text = "Loaded ${v.size} voices: " + v.keys.joinToString(", ") }
+                } catch (e: Exception) { runOnUiThread { vstatus.text = "Voice list failed: ${e.message}" } }
+            }.start()
+        }
         val engineBtn = btn("") { }
         fun engineLabel() { engineBtn.text = "Voice engine: ${Prefs.engine} (tap to change)" }
         engineLabel()
@@ -64,7 +79,13 @@ class MainActivity : Activity() {
             if (Prefs.engine == "phone") Prefs.engine = if (Prefs.elevenKey.isNotEmpty()) "eleven" else if (Prefs.geminiKey.isNotEmpty()) "gemini" else "phone"
             Prefs.save(this); engineLabel()
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
+            if (Prefs.elevenKey.isNotBlank()) loadVoices()
         }
+        btn("Load my ElevenLabs voices") { Prefs.elevenKey = eKey.text.toString().trim(); loadVoices() }
+        col.addView(vstatus)
+        val chat = Switch(this).apply { text = "Chat only (skip commands / tool rows)"; isChecked = Prefs.chatOnly }
+        chat.setOnCheckedChangeListener { _, c -> Prefs.chatOnly = c; Prefs.save(this) }
+        col.addView(chat)
         val status = TextView(this).apply { setTextColor(Color.YELLOW) }
         btn("Test current voice engine") {
             Prefs.load(this)
