@@ -29,8 +29,14 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     private var speaking = 0
     private val gemini = GeminiSpeaker(
         onChunkDone = { h.post { if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); maybeListen() } } },
-        onFail = { text -> h.post { speaking++; tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "f${System.nanoTime()}") } }
+        onFail = { text -> h.post { toastOnce("Gemini failed, using phone voice: " + gemini.lastError); speaking++; tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "f${System.nanoTime()}") } }
     )
+    private var lastToast = 0L
+    private fun toastOnce(m: String) {
+        if (System.currentTimeMillis() - lastToast < 15000) return
+        lastToast = System.currentTimeMillis()
+        android.widget.Toast.makeText(this, m.take(200), android.widget.Toast.LENGTH_LONG).show()
+    }
     private fun useGemini() = Prefs.geminiKey.isNotBlank() && Prefs.geminiOn
     private fun say(chunk: String, id: String) {
         if (useGemini()) gemini.enqueue(chunk) else tts?.speak(chunk, TextToSpeech.QUEUE_ADD, null, id)
@@ -308,7 +314,8 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         }
         val panel = android.widget.LinearLayout(ctx).apply {
             orientation = android.widget.LinearLayout.VERTICAL; visibility = android.view.View.GONE
-            background = bg(0xEE222222.toInt(), 12); setPadding(px(8), px(8), px(8), px(8))
+            background = bg(0xF2222222.toInt(), 12); setPadding(px(8), px(8), px(8), px(8))
+            layoutParams = android.widget.LinearLayout.LayoutParams(px(290), android.widget.LinearLayout.LayoutParams.WRAP_CONTENT)
         }
         fun refresh() { bubble.background = bg(if (Prefs.listen) 0xFF2E7D32.toInt() else 0xFF616161.toInt(), 26) }
 

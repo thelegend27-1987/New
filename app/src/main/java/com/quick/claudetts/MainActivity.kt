@@ -51,6 +51,25 @@ class MainActivity : Activity() {
             Prefs.save(this)
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
         }
+        val status = TextView(this).apply { setTextColor(Color.YELLOW) }
+        btn("Test Gemini voice") {
+            Prefs.load(this)
+            if (Prefs.geminiKey.isBlank()) { status.text = "No key saved"; return@btn }
+            status.text = "Testing..."
+            lateinit var sp: GeminiSpeaker
+            sp = GeminiSpeaker(
+                onChunkDone = { runOnUiThread { if (sp.lastError.isEmpty()) status.text = "Gemini OK (you should have heard it)" } },
+                onFail = { _ ->
+                    val err = sp.lastError
+                    Thread {
+                        val extra = try { GeminiSpeaker.listTtsModels() } catch (e: Exception) { "" }
+                        runOnUiThread { status.text = "Gemini FAILED: $err\n$extra" }
+                    }.start()
+                }
+            )
+            sp.enqueue("Hello, this is the Gemini voice.")
+        }
+        col.addView(status)
         btn("Skip / stop speaking") { ScreenService.inst?.stopAll() }
         btn("Re-sync (mark current screen as already read)") { ScreenService.inst?.resync() }
         col.addView(TextView(this).apply {

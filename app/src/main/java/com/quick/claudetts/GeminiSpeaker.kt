@@ -90,4 +90,17 @@ class GeminiSpeaker(
             t.release(); track = null
         }
     }
+
+    companion object {
+        /** Names of models that mention "tts" (for debugging a wrong model name). */
+        fun listTtsModels(): String {
+            val c = URL("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200").openConnection() as HttpURLConnection
+            c.connectTimeout = 15000; c.readTimeout = 20000
+            c.setRequestProperty("x-goog-api-key", Prefs.geminiKey)
+            if (c.responseCode != 200) return "list failed: HTTP ${c.responseCode}"
+            val arr = JSONObject(c.inputStream.bufferedReader().readText()).optJSONArray("models") ?: return "no models"
+            val out = (0 until arr.length()).map { arr.getJSONObject(it).getString("name").removePrefix("models/") }.filter { it.contains("tts", true) }
+            return if (out.isEmpty()) "no TTS models available to this key" else "TTS models: " + out.joinToString(", ")
+        }
+    }
 }
