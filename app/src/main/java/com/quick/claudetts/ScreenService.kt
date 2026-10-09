@@ -108,7 +108,29 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         if (say.isEmpty()) maybeListen()
     }
 
-    private fun speak(s: String) {
+    // Don't read URLs / hashes out loud: "https://github.com/foo/bar/pull/3" -> "GitHub link".
+    private val urlRe = Regex("""(?i)\b(?:https?://|www\.)[^\s)>\]"']+""")
+    private val hashRe = Regex("""\b[0-9a-f]{12,}\b""", RegexOption.IGNORE_CASE)
+    private val friendly = mapOf(
+        "github.com" to "GitHub", "claude.ai" to "Claude", "anthropic.com" to "Anthropic",
+        "google.com" to "Google", "youtube.com" to "YouTube", "stackoverflow.com" to "Stack Overflow",
+        "docs.google.com" to "Google Docs", "npmjs.com" to "npm", "pypi.org" to "PyPI"
+    )
+
+    private fun clean(s: String): String {
+        var t = urlRe.replace(s) { m ->
+            val host = m.value.replace(Regex("(?i)^(https?://)?(www\\.)?"), "").substringBefore('/').substringBefore('?').lowercase(Locale.ROOT)
+            val name = friendly.entries.firstOrNull { host == it.key || host.endsWith("." + it.key) }?.value
+                ?: host.split('.').let { if (it.size >= 2) it[it.size - 2] else host }
+            "$name link"
+        }
+        t = hashRe.replace(t, "hash")
+        return t.replace(Regex("[`*#]+"), "").trim()
+    }
+
+    private fun speak(raw: String) {
+        val s = clean(raw)
+        if (s.isEmpty()) return
         // TTS has a ~4000 char limit per utterance: chunk on sentence-ish boundaries.
         var rest = s
         while (rest.isNotEmpty()) {
