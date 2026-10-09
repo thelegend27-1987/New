@@ -1,0 +1,3 @@
+<resources>
+    <string name="svc_desc">Reads on-screen text aloud and types/sends your spoken replies.</string>
+</resources>
