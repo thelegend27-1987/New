@@ -31,7 +31,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         onChunkDone = { h.post { if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); maybeListen() } } },
         onFail = { text -> h.post { speaking++; tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "f${System.nanoTime()}") } }
     )
-    private fun useGemini() = Prefs.geminiKey.isNotBlank()
+    private fun useGemini() = Prefs.geminiKey.isNotBlank() && Prefs.geminiOn
     private fun say(chunk: String, id: String) {
         if (useGemini()) gemini.enqueue(chunk) else tts?.speak(chunk, TextToSpeech.QUEUE_ADD, null, id)
     }
@@ -284,53 +284,91 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     }
 
     private var overlay: android.view.View? = null
+    private val geminiVoices = listOf("Kore", "Puck", "Charon", "Aoede", "Fenrir", "Zephyr", "Leda", "Orus", "Callirrhoe", "Sulafat")
 
-    // Floating Skip / Resync / Mic buttons (drag the ⋮ handle to move). Needs no extra permission.
+    // Floating bubble: tap to expand a control panel over any app; drag to move.
     private fun addOverlay() {
         if (overlay != null) return
+        val ctx = this
         val wm = getSystemService(WINDOW_SERVICE) as android.view.WindowManager
         val dp = resources.displayMetrics.density
-        fun b(t: String, f: () -> Unit) = android.widget.Button(this).apply {
-            text = t; textSize = 12f; setOnClickListener { f() }
-            minWidth = 0; minimumWidth = 0; setPadding((10 * dp).toInt(), 0, (10 * dp).toInt(), 0)
-        }
-        val row = android.widget.LinearLayout(this).apply {
-            orientation = android.widget.LinearLayout.HORIZONTAL
-            setBackgroundColor(0xCC222222.toInt()); alpha = 0.9f
-        }
+        fun px(v: Int) = (v * dp).toInt()
+        fun bg(color: Int, r: Int) = android.graphics.drawable.GradientDrawable().apply { setColor(color); cornerRadius = r * dp }
+
+        val root = android.widget.LinearLayout(ctx).apply { orientation = android.widget.LinearLayout.VERTICAL }
         val lp = android.view.WindowManager.LayoutParams(
-            android.view.WindowManager.LayoutParams.WRAP_CONTENT,
-            android.view.WindowManager.LayoutParams.WRAP_CONTENT,
+            android.view.WindowManager.LayoutParams.WRAP_CONTENT, android.view.WindowManager.LayoutParams.WRAP_CONTENT,
             android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-            android.graphics.PixelFormat.TRANSLUCENT
-        ).apply { gravity = android.view.Gravity.TOP or android.view.Gravity.START; x = 20; y = (160 * dp).toInt() }
-        val handle = android.widget.TextView(this).apply {
-            text = " ⋮ "; textSize = 22f; setTextColor(android.graphics.Color.WHITE)
-            var sx = 0f; var sy = 0f; var ox = 0; var oy = 0
-            setOnTouchListener { _, ev ->
+            android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, android.graphics.PixelFormat.TRANSLUCENT
+        ).apply { gravity = android.view.Gravity.TOP or android.view.Gravity.START; x = px(8); y = px(200) }
+
+        val bubble = android.widget.TextView(ctx).apply {
+            text = "🎙"; textSize = 22f; gravity = android.view.Gravity.CENTER
+            layoutParams = android.widget.LinearLayout.LayoutParams(px(52), px(52))
+        }
+        val panel = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.VERTICAL; visibility = android.view.View.GONE
+            background = bg(0xEE222222.toInt(), 12); setPadding(px(8), px(8), px(8), px(8))
+        }
+        fun refresh() { bubble.background = bg(if (Prefs.listen) 0xFF2E7D32.toInt() else 0xFF616161.toInt(), 26) }
+
+        fun btn(label: () -> String, w: Float = 1f, onClick: (android.widget.Button) -> Unit) = android.widget.Button(ctx).apply {
+            text = label(); textSize = 12f; isAllCaps = false; minWidth = 0; minimumWidth = 0; minHeight = 0; minimumHeight = 0
+            setPadding(px(6), px(8), px(6), px(8))
+            layoutParams = android.widget.LinearLayout.LayoutParams(0, android.widget.LinearLayout.LayoutParams.WRAP_CONTENT, w)
+            setOnClickListener { onClick(this); text = label() }
+        }
+        fun row(vararg v: android.view.View) = android.widget.LinearLayout(ctx).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            v.forEach { addView(it) }
+        }.also { panel.addView(it) }
+
+        row(btn({ "Skip" }) { stopAll(); h.postDelayed({ maybeListen() }, 300) },
+            btn({ "Resync" }) { resync() },
+            btn({ "Clear draft" }) { pending.setLength(0); setField("") })
+        row(btn({ if (Prefs.listen) "Mic: on" else "Mic: off" }) {
+                Prefs.listen = !Prefs.listen; if (Prefs.listen) maybeListen() else stopListening(); refresh() },
+            btn({ if (Prefs.read) "Read: on" else "Read: off" }) {
+                Prefs.read = !Prefs.read; if (!Prefs.read) { stopSpeech(); speaking = 0; spokenWords.clear() } })
+        row(btn({ if (Prefs.geminiKey.isBlank()) "Voice: phone" else if (Prefs.geminiOn) "Gemini: on" else "Gemini: off" }) {
+                if (Prefs.geminiKey.isNotBlank()) { Prefs.geminiOn = !Prefs.geminiOn; Prefs.save(ctx) } },
+            btn({ "Voice: ${Prefs.geminiVoice}" }) {
+                val i = geminiVoices.indexOf(Prefs.geminiVoice)
+                Prefs.geminiVoice = geminiVoices[(i + 1) % geminiVoices.size]; Prefs.save(ctx) })
+        val speedLabel = android.widget.TextView(ctx).apply { setTextColor(android.graphics.Color.WHITE); textSize = 12f }
+        fun speedText() { speedLabel.text = "Speed %.1fx (phone voice)".format(Prefs.rate) }
+        speedText()
+        panel.addView(speedLabel)
+        panel.addView(android.widget.SeekBar(ctx).apply {
+            max = 30; progress = ((Prefs.rate - 0.5f) * 10).toInt()
+            setOnSeekBarChangeListener(object : android.widget.SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(sb: android.widget.SeekBar?, p: Int, u: Boolean) { Prefs.rate = 0.5f + p / 10f; applyVoice(); speedText() }
+                override fun onStartTrackingTouch(sb: android.widget.SeekBar?) {}
+                override fun onStopTrackingTouch(sb: android.widget.SeekBar?) {}
+            })
+        })
+
+        // tap = expand/collapse, drag = move
+        bubble.setOnTouchListener(object : android.view.View.OnTouchListener {
+            var sx = 0f; var sy = 0f; var ox = 0; var oy = 0; var moved = false
+            override fun onTouch(v: android.view.View, ev: android.view.MotionEvent): Boolean {
                 when (ev.action) {
-                    android.view.MotionEvent.ACTION_DOWN -> { sx = ev.rawX; sy = ev.rawY; ox = lp.x; oy = lp.y }
+                    android.view.MotionEvent.ACTION_DOWN -> { sx = ev.rawX; sy = ev.rawY; ox = lp.x; oy = lp.y; moved = false }
                     android.view.MotionEvent.ACTION_MOVE -> {
-                        lp.x = ox + (ev.rawX - sx).toInt(); lp.y = oy + (ev.rawY - sy).toInt()
-                        wm.updateViewLayout(row, lp)
+                        if (Math.abs(ev.rawX - sx) > 10 * dp || Math.abs(ev.rawY - sy) > 10 * dp) moved = true
+                        if (moved) { lp.x = ox + (ev.rawX - sx).toInt(); lp.y = oy + (ev.rawY - sy).toInt(); wm.updateViewLayout(root, lp) }
+                    }
+                    android.view.MotionEvent.ACTION_UP -> if (!moved) {
+                        panel.visibility = if (panel.visibility == android.view.View.GONE) android.view.View.VISIBLE else android.view.View.GONE
                     }
                 }
-                true
+                return true
             }
-        }
-        row.addView(handle)
-        row.addView(b("Skip") { stopAll(); h.postDelayed({ maybeListen() }, 300) })
-        row.addView(b("Resync") { resync() })
-        val mic = b(if (Prefs.listen) "Mic on" else "Mic off") {}
-        mic.setOnClickListener {
-            Prefs.listen = !Prefs.listen
-            mic.text = if (Prefs.listen) "Mic on" else "Mic off"
-            if (Prefs.listen) maybeListen() else stopListening()
-        }
-        row.addView(mic)
-        overlay = row
-        wm.addView(row, lp)
+        })
+        refresh()
+        root.addView(bubble); root.addView(panel)
+        overlay = root
+        wm.addView(root, lp)
     }
 
     private fun removeOverlay() {

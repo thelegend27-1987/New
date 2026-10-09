@@ -63,16 +63,18 @@ class MainActivity : Activity() {
 
 object Prefs {
     @Volatile var geminiKey = ""
+    @Volatile var geminiOn = true
     @Volatile var geminiVoice = "Kore"
     @Volatile var geminiModel = "gemini-2.5-flash-preview-tts"
     fun load(c: android.content.Context) {
         val p = c.getSharedPreferences("p", 0)
         geminiKey = p.getString("gk", "") ?: ""
+        geminiOn = p.getBoolean("go", true)
         geminiVoice = p.getString("gv", "Kore") ?: "Kore"
         geminiModel = p.getString("gm", "gemini-2.5-flash-preview-tts") ?: "gemini-2.5-flash-preview-tts"
     }
     fun save(c: android.content.Context) {
-        c.getSharedPreferences("p", 0).edit().putString("gk", geminiKey).putString("gv", geminiVoice).putString("gm", geminiModel).apply()
+        c.getSharedPreferences("p", 0).edit().putString("gk", geminiKey).putString("gv", geminiVoice).putString("gm", geminiModel).putBoolean("go", geminiOn).apply()
     }
     @Volatile var read = true
     @Volatile var listen = true
