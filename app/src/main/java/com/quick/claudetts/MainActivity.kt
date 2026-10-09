@@ -25,6 +25,19 @@ class MainActivity : Activity() {
         val sw2 = Switch(this).apply { text = "Hands-free voice reply (listens after speaking)"; isChecked = true }
         sw2.setOnCheckedChangeListener { _, c -> Prefs.listen = c; if (!c) ScreenService.inst?.stopAll() else ScreenService.inst?.maybeListen() }
         col.addView(sw2)
+        btn("Change voice (system speech settings)") {
+            try { startActivity(Intent("com.android.settings.TTS_SETTINGS")) }
+            catch (e: Exception) { startActivity(Intent(Settings.ACTION_SETTINGS)) }
+        }
+        col.addView(TextView(this).apply { text = "Speech speed"; setTextColor(Color.BLACK) })
+        col.addView(SeekBar(this).apply {
+            max = 30; progress = ((Prefs.rate - 0.5f) * 10).toInt()
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) { Prefs.rate = 0.5f + p / 10f; ScreenService.inst?.applyVoice() }
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {}
+            })
+        })
         btn("Skip / stop speaking") { ScreenService.inst?.stopAll() }
         btn("Re-sync (mark current screen as already read)") { ScreenService.inst?.resync() }
         col.addView(TextView(this).apply {
@@ -38,4 +51,5 @@ class MainActivity : Activity() {
 object Prefs {
     @Volatile var read = true
     @Volatile var listen = true
+    @Volatile var rate = 1.2f
 }

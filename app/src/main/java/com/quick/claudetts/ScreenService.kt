@@ -27,6 +27,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var speaking = 0
+    private val spokenWords = HashSet<String>()   // words of what we are currently saying (echo filter)
     private var sr: SpeechRecognizer? = null
     private var listening = false
     private val seen = HashSet<String>()
@@ -46,13 +47,27 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         ttsReady = status == TextToSpeech.SUCCESS
         h.postDelayed({ maybeListen() }, 1000)
         tts?.language = Locale.getDefault()
+        applyVoice()
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
             override fun onError(id: String?) { done() }
             override fun onDone(id: String?) { done() }
-            private fun done() = h.post { if (speaking > 0) speaking--; if (speaking == 0) maybeListen() }
+            private fun done() = h.post { if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); maybeListen() } }
         })
     }
+
+    // Pick the best-quality installed voice for the current language; user can also pick one in system TTS settings.
+    fun applyVoice() {
+        val t = tts ?: return
+        t.setSpeechRate(Prefs.rate)
+        try {
+            val best = t.voices?.filter { it.locale.language == Locale.getDefault().language && !it.features.contains("notInstalled") }
+                ?.maxByOrNull { it.quality * 10 + (if (it.isNetworkConnectionRequired) 1 else 0) }
+            if (best != null) t.voice = best
+        } catch (_: Exception) {}
+    }
+
+    private fun words(s: String) = s.lowercase(Locale.ROOT).split(Regex("[^a-z0-9']+")).filter { it.length > 2 }
 
     override fun onAccessibilityEvent(e: AccessibilityEvent?) {
         if (e == null || e.packageName == packageName) return
@@ -100,7 +115,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
             val cut = if (rest.length <= 3000) rest.length
                 else rest.lastIndexOfAny(charArrayOf('.', '\n', '!', '?'), 3000).let { if (it < 500) 3000 else it + 1 }
             speaking++
-            stopListening()
+            spokenWords.addAll(words(rest.substring(0, cut)))
             tts?.speak(rest.substring(0, cut), TextToSpeech.QUEUE_ADD, null, "u${System.nanoTime()}")
             rest = rest.substring(cut).trim()
         }
@@ -111,13 +126,13 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     }
 
     fun stopAll() {
-        tts?.stop(); speaking = 0
+        tts?.stop(); speaking = 0; spokenWords.clear()
         stopListening()
     }
 
     // ---- hands-free listening ----
     fun maybeListen() {
-        if (!Prefs.listen || speaking > 0 || listening) return
+        if (!Prefs.listen || listening) return
         if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
         if (!SpeechRecognizer.isRecognitionAvailable(this)) return
         listening = true
@@ -160,10 +175,17 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
 
     // Continuous dictation: everything you say is appended to the text box; ending with "send" submits.
     private fun handleVoice(text: String) {
+        if (speaking > 0) {
+            // We were talking while the mic was open: ignore our own voice echoing back, otherwise barge in.
+            val w = words(text)
+            val echo = w.isEmpty() || w.count { it in spokenWords } >= w.size * 0.6
+            if (echo) { maybeListen(); return }
+            tts?.stop(); speaking = 0; spokenWords.clear()
+        }
         val t = text.lowercase(Locale.ROOT).trim().trimEnd('.', ',', '!', '?')
         when (t) {
             "stop listening", "pause" -> { Prefs.listen = false; speakNow("Paused"); return }
-            "stop", "skip", "quiet", "be quiet" -> { tts?.stop(); speaking = 0; maybeListen(); return }
+            "stop", "skip", "quiet", "be quiet" -> { tts?.stop(); speaking = 0; spokenWords.clear(); maybeListen(); return }
             "delete", "delete it", "delete message", "cancel", "clear", "never mind", "scratch that" -> { pending.setLength(0); setField(""); maybeListen(); return }
         }
         val m = Regex("(?i)^(.*?)[\\s,.!?]*\\bsend( it| message)?[.!?]*$").find(text.trim())
@@ -180,7 +202,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         maybeListen()
     }
 
-    private fun speakNow(s: String) { speaking++; tts?.speak(s, TextToSpeech.QUEUE_ADD, null, "n${System.nanoTime()}") }
+    private fun speakNow(s: String) { speaking++; spokenWords.addAll(words(s)); tts?.speak(s, TextToSpeech.QUEUE_ADD, null, "n${System.nanoTime()}") }
 
     private fun findEditable(n: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (n == null) return null
