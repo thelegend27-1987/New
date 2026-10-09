@@ -39,6 +39,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     override fun onServiceConnected() {
         inst = this
         tts = TextToSpeech(this, this)
+        addOverlay()
     }
 
     override fun onInit(status: Int) {
@@ -219,6 +220,61 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         return true
     }
 
+    private var overlay: android.view.View? = null
+
+    // Floating Skip / Resync / Mic buttons (drag the ⋮ handle to move). Needs no extra permission.
+    private fun addOverlay() {
+        if (overlay != null) return
+        val wm = getSystemService(WINDOW_SERVICE) as android.view.WindowManager
+        val dp = resources.displayMetrics.density
+        fun b(t: String, f: () -> Unit) = android.widget.Button(this).apply {
+            text = t; textSize = 12f; setOnClickListener { f() }
+            minWidth = 0; minimumWidth = 0; setPadding((10 * dp).toInt(), 0, (10 * dp).toInt(), 0)
+        }
+        val row = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.HORIZONTAL
+            setBackgroundColor(0xCC222222.toInt()); alpha = 0.9f
+        }
+        val lp = android.view.WindowManager.LayoutParams(
+            android.view.WindowManager.LayoutParams.WRAP_CONTENT,
+            android.view.WindowManager.LayoutParams.WRAP_CONTENT,
+            android.view.WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            android.graphics.PixelFormat.TRANSLUCENT
+        ).apply { gravity = android.view.Gravity.TOP or android.view.Gravity.START; x = 20; y = (160 * dp).toInt() }
+        val handle = android.widget.TextView(this).apply {
+            text = " ⋮ "; textSize = 22f; setTextColor(android.graphics.Color.WHITE)
+            var sx = 0f; var sy = 0f; var ox = 0; var oy = 0
+            setOnTouchListener { _, ev ->
+                when (ev.action) {
+                    android.view.MotionEvent.ACTION_DOWN -> { sx = ev.rawX; sy = ev.rawY; ox = lp.x; oy = lp.y }
+                    android.view.MotionEvent.ACTION_MOVE -> {
+                        lp.x = ox + (ev.rawX - sx).toInt(); lp.y = oy + (ev.rawY - sy).toInt()
+                        wm.updateViewLayout(row, lp)
+                    }
+                }
+                true
+            }
+        }
+        row.addView(handle)
+        row.addView(b("Skip") { stopAll(); h.postDelayed({ maybeListen() }, 300) })
+        row.addView(b("Resync") { resync() })
+        val mic = b(if (Prefs.listen) "Mic on" else "Mic off") {}
+        mic.setOnClickListener {
+            Prefs.listen = !Prefs.listen
+            mic.text = if (Prefs.listen) "Mic on" else "Mic off"
+            if (Prefs.listen) maybeListen() else stopListening()
+        }
+        row.addView(mic)
+        overlay = row
+        wm.addView(row, lp)
+    }
+
+    private fun removeOverlay() {
+        overlay?.let { (getSystemService(WINDOW_SERVICE) as android.view.WindowManager).removeView(it) }
+        overlay = null
+    }
+
     override fun onInterrupt() { stopAll() }
-    override fun onDestroy() { stopAll(); tts?.shutdown(); inst = null; super.onDestroy() }
+    override fun onDestroy() { removeOverlay(); stopAll(); tts?.shutdown(); inst = null; super.onDestroy() }
 }
