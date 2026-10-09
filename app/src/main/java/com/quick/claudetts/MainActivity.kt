@@ -70,6 +70,7 @@ class MainActivity : Activity() {
             sp.enqueue("Hello, this is the Gemini voice.")
         }
         col.addView(status)
+        btn("Repeat last paragraph") { ScreenService.inst?.repeatLast() }
         btn("Skip / stop speaking") { ScreenService.inst?.stopAll() }
         btn("Re-sync (mark current screen as already read)") { ScreenService.inst?.resync() }
         col.addView(TextView(this).apply {

@@ -28,7 +28,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     private var ttsReady = false
     private var speaking = 0
     private val gemini = GeminiSpeaker(
-        onChunkDone = { h.post { if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); maybeListen() } } },
+        onChunkDone = { h.post { chunkFinished(); if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); allDone(); maybeListen() } } },
         onFail = { text ->
             // Phone voice reads this chunk; block the Gemini worker until done so order is kept.
             val latch = java.util.concurrent.CountDownLatch(1)
@@ -37,6 +37,35 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
             latch.await(90, java.util.concurrent.TimeUnit.SECONDS)
         }
     )
+    // Paragraph tracking so "repeat" can replay the paragraph being spoken, then carry on with the rest.
+    private val paras = ArrayList<Pair<String, Int>>()   // cleaned text, number of audio chunks
+    private var doneChunks = 0
+    private var lastPara = ""
+    private var ignoreUntil = 0L
+
+    private fun chunkFinished() {
+        if (System.currentTimeMillis() < ignoreUntil) return
+        doneChunks++
+    }
+    private fun allDone() {
+        paras.lastOrNull()?.let { lastPara = it.first }
+        paras.clear(); doneChunks = 0
+    }
+    private fun currentIndex(): Int {
+        var acc = 0
+        for ((i, p) in paras.withIndex()) { acc += p.second; if (doneChunks < acc) return i }
+        return -1
+    }
+
+    fun repeatLast() {
+        val idx = currentIndex()
+        val texts = if (idx >= 0) paras.subList(idx, paras.size).map { it.first } else listOfNotNull(lastPara.takeIf { it.isNotEmpty() })
+        if (texts.isEmpty()) return
+        stopSpeech(); speaking = 0; spokenWords.clear(); paras.clear(); doneChunks = 0
+        ignoreUntil = System.currentTimeMillis() + 600
+        texts.forEach { speakClean(it) }
+    }
+
     @Volatile private var fallbackLatch: java.util.concurrent.CountDownLatch? = null
     private var lastToast = 0L
     private fun toastOnce(m: String) {
@@ -79,7 +108,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
                 if (id?.startsWith("f") == true) { fallbackLatch?.countDown(); return }   // Gemini-fallback chunk: not counted
                 finishOne()
             }
-            private fun finishOne() = h.post { if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); maybeListen() } }
+            private fun finishOne() = h.post { chunkFinished(); if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); allDone(); maybeListen() } }
         })
     }
 
@@ -166,17 +195,24 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     private fun speak(raw: String) {
         val s = clean(raw)
         if (s.isEmpty()) return
+        speakClean(s)
+    }
+
+    private fun speakClean(s: String) {
+        var n = 0
         // TTS has a ~4000 char limit per utterance: chunk on sentence-ish boundaries.
         var rest = s
         while (rest.isNotEmpty()) {
             val lim = if (useGemini()) 700 else 3000
             val cut = if (rest.length <= lim) rest.length
                 else rest.lastIndexOfAny(charArrayOf('.', '\n', '!', '?'), lim).let { if (it < lim / 6) lim else it + 1 }
+            n++
             speaking++
             spokenWords.addAll(words(rest.substring(0, cut)))
             say(rest.substring(0, cut), "u${System.nanoTime()}")
             rest = rest.substring(cut).trim()
         }
+        paras.add(s to n)
     }
 
     fun resync() {
@@ -243,6 +279,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         val t = text.lowercase(Locale.ROOT).trim().trimEnd('.', ',', '!', '?')
         when (t) {
             "stop listening", "pause" -> { Prefs.listen = false; speakNow("Paused"); return }
+            "repeat", "repeat that", "say that again", "again", "repeat it" -> { repeatLast(); return }
             "stop", "skip", "quiet", "be quiet" -> { stopSpeech(); speaking = 0; spokenWords.clear(); maybeListen(); return }
             "delete", "delete it", "delete message", "cancel", "clear", "never mind", "scratch that" -> { pending.setLength(0); setField(""); maybeListen(); return }
         }
@@ -344,6 +381,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         row(btn({ "Skip" }) { stopAll(); h.postDelayed({ maybeListen() }, 300) },
             btn({ "Resync" }) { resync() },
             btn({ "Clear draft" }) { pending.setLength(0); setField("") })
+        row(btn({ "\u21BB Repeat" }) { repeatLast() })
         row(btn({ if (Prefs.listen) "Mic: on" else "Mic: off" }) {
                 Prefs.listen = !Prefs.listen; if (Prefs.listen) maybeListen() else stopListening(); refresh() },
             btn({ if (Prefs.read) "Read: on" else "Read: off" }) {
