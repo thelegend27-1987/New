@@ -27,6 +27,15 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var speaking = 0
+    private val gemini = GeminiSpeaker(
+        onChunkDone = { h.post { if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); maybeListen() } } },
+        onFail = { text -> h.post { speaking++; tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "f${System.nanoTime()}") } }
+    )
+    private fun useGemini() = Prefs.geminiKey.isNotBlank()
+    private fun say(chunk: String, id: String) {
+        if (useGemini()) gemini.enqueue(chunk) else tts?.speak(chunk, TextToSpeech.QUEUE_ADD, null, id)
+    }
+    private fun stopSpeech() { tts?.stop(); gemini.stop() }
     private val spokenWords = HashSet<String>()   // words of what we are currently saying (echo filter)
     private var sr: SpeechRecognizer? = null
     private var listening = false
@@ -39,6 +48,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
 
     override fun onServiceConnected() {
         inst = this
+        Prefs.load(this)
         tts = TextToSpeech(this, this)
         addOverlay()
     }
@@ -134,11 +144,12 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         // TTS has a ~4000 char limit per utterance: chunk on sentence-ish boundaries.
         var rest = s
         while (rest.isNotEmpty()) {
-            val cut = if (rest.length <= 3000) rest.length
-                else rest.lastIndexOfAny(charArrayOf('.', '\n', '!', '?'), 3000).let { if (it < 500) 3000 else it + 1 }
+            val lim = if (useGemini()) 350 else 3000
+            val cut = if (rest.length <= lim) rest.length
+                else rest.lastIndexOfAny(charArrayOf('.', '\n', '!', '?'), lim).let { if (it < lim / 6) lim else it + 1 }
             speaking++
             spokenWords.addAll(words(rest.substring(0, cut)))
-            tts?.speak(rest.substring(0, cut), TextToSpeech.QUEUE_ADD, null, "u${System.nanoTime()}")
+            say(rest.substring(0, cut), "u${System.nanoTime()}")
             rest = rest.substring(cut).trim()
         }
     }
@@ -148,7 +159,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     }
 
     fun stopAll() {
-        tts?.stop(); speaking = 0; spokenWords.clear()
+        stopSpeech(); speaking = 0; spokenWords.clear()
         stopListening()
     }
 
@@ -202,12 +213,12 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
             val w = words(text)
             val echo = w.isEmpty() || w.count { it in spokenWords } >= w.size * 0.6
             if (echo) { maybeListen(); return }
-            tts?.stop(); speaking = 0; spokenWords.clear()
+            stopSpeech(); speaking = 0; spokenWords.clear()
         }
         val t = text.lowercase(Locale.ROOT).trim().trimEnd('.', ',', '!', '?')
         when (t) {
             "stop listening", "pause" -> { Prefs.listen = false; speakNow("Paused"); return }
-            "stop", "skip", "quiet", "be quiet" -> { tts?.stop(); speaking = 0; spokenWords.clear(); maybeListen(); return }
+            "stop", "skip", "quiet", "be quiet" -> { stopSpeech(); speaking = 0; spokenWords.clear(); maybeListen(); return }
             "delete", "delete it", "delete message", "cancel", "clear", "never mind", "scratch that" -> { pending.setLength(0); setField(""); maybeListen(); return }
         }
         val m = Regex("(?i)^(.*?)[\\s,.!?]*\\bsend( it| message)?[.!?]*$").find(text.trim())
@@ -224,7 +235,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         maybeListen()
     }
 
-    private fun speakNow(s: String) { speaking++; spokenWords.addAll(words(s)); tts?.speak(s, TextToSpeech.QUEUE_ADD, null, "n${System.nanoTime()}") }
+    private fun speakNow(s: String) { speaking++; spokenWords.addAll(words(s)); say(s, "n${System.nanoTime()}") }
 
     private fun findEditable(n: AccessibilityNodeInfo?): AccessibilityNodeInfo? {
         if (n == null) return null

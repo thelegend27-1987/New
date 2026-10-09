@@ -38,6 +38,19 @@ class MainActivity : Activity() {
                 override fun onStopTrackingTouch(s: SeekBar?) {}
             })
         })
+        col.addView(TextView(this).apply { text = "Gemini voice (optional): paste a Gemini API key from aistudio.google.com/apikey. Empty = phone voice."; setTextColor(Color.BLACK) })
+        Prefs.load(this)
+        val key = EditText(this).apply { hint = "Gemini API key"; setText(Prefs.geminiKey); setSingleLine() }
+        val voice = EditText(this).apply { hint = "Voice name (e.g. Kore, Puck, Charon, Aoede, Fenrir)"; setText(Prefs.geminiVoice); setSingleLine() }
+        val model = EditText(this).apply { hint = "Model"; setText(Prefs.geminiModel); setSingleLine() }
+        col.addView(key); col.addView(voice); col.addView(model)
+        btn("Save Gemini settings") {
+            Prefs.geminiKey = key.text.toString().trim()
+            Prefs.geminiVoice = voice.text.toString().trim().ifEmpty { "Kore" }
+            Prefs.geminiModel = model.text.toString().trim().ifEmpty { "gemini-2.5-flash-preview-tts" }
+            Prefs.save(this)
+            Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
+        }
         btn("Skip / stop speaking") { ScreenService.inst?.stopAll() }
         btn("Re-sync (mark current screen as already read)") { ScreenService.inst?.resync() }
         col.addView(TextView(this).apply {
@@ -49,6 +62,18 @@ class MainActivity : Activity() {
 }
 
 object Prefs {
+    @Volatile var geminiKey = ""
+    @Volatile var geminiVoice = "Kore"
+    @Volatile var geminiModel = "gemini-2.5-flash-preview-tts"
+    fun load(c: android.content.Context) {
+        val p = c.getSharedPreferences("p", 0)
+        geminiKey = p.getString("gk", "") ?: ""
+        geminiVoice = p.getString("gv", "Kore") ?: "Kore"
+        geminiModel = p.getString("gm", "gemini-2.5-flash-preview-tts") ?: "gemini-2.5-flash-preview-tts"
+    }
+    fun save(c: android.content.Context) {
+        c.getSharedPreferences("p", 0).edit().putString("gk", geminiKey).putString("gv", geminiVoice).putString("gm", geminiModel).apply()
+    }
     @Volatile var read = true
     @Volatile var listen = true
     @Volatile var rate = 1.2f
