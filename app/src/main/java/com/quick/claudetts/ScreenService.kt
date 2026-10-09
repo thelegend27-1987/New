@@ -120,6 +120,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
 
     // Don't read URLs / hashes out loud: "https://github.com/foo/bar/pull/3" -> "GitHub link".
     private val urlRe = Regex("""(?i)\b(?:https?://|www\.)[^\s)>\]"']+""")
+    private val pathRe = Regex("""(?<![\w:/])(?:~/|\.\.?/|/)?(?:[\w.@-]+/)+[\w.@-]*""")
     private val hashRe = Regex("""\b[0-9a-f]{12,}\b""", RegexOption.IGNORE_CASE)
     private val friendly = mapOf(
         "github.com" to "GitHub", "claude.ai" to "Claude", "anthropic.com" to "Anthropic",
@@ -133,6 +134,13 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
             val name = friendly.entries.firstOrNull { host == it.key || host.endsWith("." + it.key) }?.value
                 ?: host.split('.').let { if (it.size >= 2) it[it.size - 2] else host }
             "$name link"
+        }
+        // File paths -> just the last part: "app/src/main/java/com/x/Foo.kt" -> "Foo.kt"
+        t = pathRe.replace(t) { m ->
+            val p = m.value
+            val last = p.trimEnd('/').substringAfterLast('/')
+            val looksLikePath = p.count { it == '/' } >= 2 || p.startsWith("/") || p.startsWith("./") || p.startsWith("~") || last.contains('.')
+            if (looksLikePath && last.isNotEmpty()) last else p
         }
         t = hashRe.replace(t, "hash")
         return t.replace(Regex("[`*#]+"), "").trim()
