@@ -28,7 +28,7 @@ class MainActivity : Activity() {
         btn("Skip / stop speaking") { ScreenService.inst?.stopAll() }
         btn("Re-sync (mark current screen as already read)") { ScreenService.inst?.resync() }
         col.addView(TextView(this).apply {
-            text = "Always listening. Talk; words appear in the Claude text box. End with \"send\" to submit. Say \"clear\" to wipe, \"stop\" to silence reading, \"pause\" to stop listening."
+            text = "Always listening. Talk; words appear in the Claude text box. End with \"send\" to submit. Say \"delete\" to wipe the draft, \"stop\" to silence reading, \"pause\" to stop listening."
             setTextColor(Color.DKGRAY)
         })
         setContentView(ScrollView(this).apply { addView(col) })

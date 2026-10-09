@@ -163,7 +163,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         when (t) {
             "stop listening", "pause" -> { Prefs.listen = false; speakNow("Paused"); return }
             "stop", "skip", "quiet", "be quiet" -> { tts?.stop(); speaking = 0; maybeListen(); return }
-            "cancel", "clear", "never mind", "scratch that" -> { pending.setLength(0); setField(""); maybeListen(); return }
+            "delete", "delete it", "delete message", "cancel", "clear", "never mind", "scratch that" -> { pending.setLength(0); setField(""); maybeListen(); return }
         }
         val m = Regex("(?i)^(.*?)[\\s,.!?]*\\bsend( it| message)?[.!?]*$").find(text.trim())
         val body = if (m != null) m.groupValues[1].trim() else text.trim()
