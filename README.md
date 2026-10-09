@@ -11,6 +11,6 @@ Push → GitHub Actions "Build APK" artifact, or locally: `gradle assembleDebug`
 3. Open Claude Code on screen. Toggle *Hands-free voice reply* in the app.
 4. Voice commands: "stop"/"skip" (silence), "stop listening"/"pause" (turn off hands-free).
 
-Overlay: a floating mic bubble (green = listening). Tap to open the control panel (Skip, Resync, Mic, Read, Gemini/voice, speed); drag to move.
+Overlay: a floating mic bubble (green = listening). Tap to open the control panel (Skip, Resync, Mic, Read, Engine/voice, speed); drag to move.
 
 Limitations: hacky text diffing (reads new on-screen lines, ignores short UI labels); Send button found by label containing "send"; uses Android's built-in recognizer (may beep / needs network on some devices).

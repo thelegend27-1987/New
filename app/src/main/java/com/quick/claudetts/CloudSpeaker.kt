@@ -11,7 +11,7 @@ import java.net.URL
 import java.util.concurrent.LinkedBlockingQueue
 
 /** Speaks text with Gemini's TTS API (24kHz 16-bit mono PCM). One worker thread, in-order queue. */
-class GeminiSpeaker(
+class CloudSpeaker(
     private val onChunkDone: () -> Unit,           // called (any thread) after each chunk, played or failed
     private val onFail: (String) -> Unit           // called (worker thread) when a chunk failed after retries; may block while it falls back
 ) {
@@ -60,7 +60,27 @@ class GeminiSpeaker(
         }
     }
 
-    private fun fetch(text: String): ByteArray {
+    private fun fetch(text: String): ByteArray = if (Prefs.engine == "eleven") fetchEleven(text) else fetchGemini(text)
+
+    /** ElevenLabs: raw 16-bit mono PCM at 24kHz. */
+    private fun fetchEleven(text: String): ByteArray {
+        val url = URL("https://api.elevenlabs.io/v1/text-to-speech/${Prefs.elevenVoice}?output_format=pcm_24000")
+        val c = url.openConnection() as HttpURLConnection
+        c.requestMethod = "POST"
+        c.connectTimeout = 15000; c.readTimeout = 30000
+        c.setRequestProperty("Content-Type", "application/json")
+        c.setRequestProperty("xi-api-key", Prefs.elevenKey)
+        c.doOutput = true
+        val body = JSONObject().put("text", text).put("model_id", Prefs.elevenModel)
+        c.outputStream.use { it.write(body.toString().toByteArray()) }
+        if (c.responseCode != 200) {
+            val err = (c.errorStream ?: c.inputStream).bufferedReader().readText().take(200)
+            throw RuntimeException("HTTP ${c.responseCode}: $err")
+        }
+        return c.inputStream.use { it.readBytes() }
+    }
+
+    private fun fetchGemini(text: String): ByteArray {
         val url = URL("https://generativelanguage.googleapis.com/v1beta/models/${Prefs.geminiModel}:generateContent")
         val c = url.openConnection() as HttpURLConnection
         c.requestMethod = "POST"

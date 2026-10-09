@@ -38,36 +38,50 @@ class MainActivity : Activity() {
                 override fun onStopTrackingTouch(s: SeekBar?) {}
             })
         })
-        col.addView(TextView(this).apply { text = "Gemini voice (optional): paste a Gemini API key from aistudio.google.com/apikey. Empty = phone voice."; setTextColor(Color.BLACK) })
+        col.addView(TextView(this).apply {
+            text = "Cloud voices (optional). ElevenLabs: key from elevenlabs.io (Profile > API keys). Gemini: key from aistudio.google.com/apikey. Empty = phone voice."
+            setTextColor(Color.BLACK)
+        })
         Prefs.load(this)
-        val key = EditText(this).apply { hint = "Gemini API key"; setText(Prefs.geminiKey); setSingleLine() }
-        val voice = EditText(this).apply { hint = "Voice name (e.g. Kore, Puck, Charon, Aoede, Fenrir)"; setText(Prefs.geminiVoice); setSingleLine() }
-        val model = EditText(this).apply { hint = "Model"; setText(Prefs.geminiModel); setSingleLine() }
-        col.addView(key); col.addView(voice); col.addView(model)
-        btn("Save Gemini settings") {
-            Prefs.geminiKey = key.text.toString().trim()
-            Prefs.geminiVoice = voice.text.toString().trim().ifEmpty { "Kore" }
-            Prefs.geminiModel = model.text.toString().trim().ifEmpty { "gemini-2.5-flash-preview-tts" }
-            Prefs.save(this)
+        fun field(h: String, v: String) = EditText(this).apply { hint = h; setText(v); setSingleLine() }.also { col.addView(it) }
+        val eKey = field("ElevenLabs API key", Prefs.elevenKey)
+        val eVoice = field("ElevenLabs voice ID (default Rachel)", Prefs.elevenVoice)
+        val eModel = field("ElevenLabs model", Prefs.elevenModel)
+        val gKey = field("Gemini API key", Prefs.geminiKey)
+        val gVoice = field("Gemini voice name (Kore, Puck, Charon, Aoede...)", Prefs.geminiVoice)
+        val gModel = field("Gemini model", Prefs.geminiModel)
+        val engineBtn = btn("") { }
+        fun engineLabel() { engineBtn.text = "Voice engine: ${Prefs.engine} (tap to change)" }
+        engineLabel()
+        engineBtn.setOnClickListener { Prefs.cycleEngine(); Prefs.save(this); engineLabel() }
+        btn("Save voice settings") {
+            Prefs.elevenKey = eKey.text.toString().trim()
+            Prefs.elevenVoice = eVoice.text.toString().trim().ifEmpty { Prefs.DEFAULT_ELEVEN_VOICE }
+            Prefs.elevenModel = eModel.text.toString().trim().ifEmpty { "eleven_flash_v2_5" }
+            Prefs.geminiKey = gKey.text.toString().trim()
+            Prefs.geminiVoice = gVoice.text.toString().trim().ifEmpty { "Kore" }
+            Prefs.geminiModel = gModel.text.toString().trim().ifEmpty { "gemini-2.5-flash-preview-tts" }
+            if (Prefs.engine == "phone") Prefs.engine = if (Prefs.elevenKey.isNotEmpty()) "eleven" else if (Prefs.geminiKey.isNotEmpty()) "gemini" else "phone"
+            Prefs.save(this); engineLabel()
             Toast.makeText(this, "Saved", Toast.LENGTH_SHORT).show()
         }
         val status = TextView(this).apply { setTextColor(Color.YELLOW) }
-        btn("Test Gemini voice") {
+        btn("Test current voice engine") {
             Prefs.load(this)
-            if (Prefs.geminiKey.isBlank()) { status.text = "No key saved"; return@btn }
-            status.text = "Testing..."
-            lateinit var sp: GeminiSpeaker
-            sp = GeminiSpeaker(
-                onChunkDone = { runOnUiThread { if (sp.lastError.isEmpty()) status.text = "Gemini OK (you should have heard it)" } },
+            if (!Prefs.cloudReady()) { status.text = "Engine is '${Prefs.engine}' or its key is missing: nothing cloud to test"; return@btn }
+            status.text = "Testing ${Prefs.engine}..."
+            lateinit var sp: CloudSpeaker
+            sp = CloudSpeaker(
+                onChunkDone = { runOnUiThread { if (sp.lastError.isEmpty()) status.text = "${Prefs.engine} OK (you should have heard it)" } },
                 onFail = { _ ->
                     val err = sp.lastError
                     Thread {
-                        val extra = try { GeminiSpeaker.listTtsModels() } catch (e: Exception) { "" }
-                        runOnUiThread { status.text = "Gemini FAILED: $err\n$extra" }
+                        val extra = try { if (Prefs.engine == "gemini") CloudSpeaker.listTtsModels() else "" } catch (e: Exception) { "" }
+                        runOnUiThread { status.text = "${Prefs.engine} FAILED: $err\n$extra" }
                     }.start()
                 }
             )
-            sp.enqueue("Hello, this is the Gemini voice.")
+            sp.enqueue("Hello, this is the cloud voice.")
         }
         col.addView(status)
         btn("Repeat last paragraph") { ScreenService.inst?.repeatLast() }
@@ -79,24 +93,4 @@ class MainActivity : Activity() {
         })
         setContentView(ScrollView(this).apply { addView(col) })
     }
-}
-
-object Prefs {
-    @Volatile var geminiKey = ""
-    @Volatile var geminiOn = true
-    @Volatile var geminiVoice = "Kore"
-    @Volatile var geminiModel = "gemini-2.5-flash-preview-tts"
-    fun load(c: android.content.Context) {
-        val p = c.getSharedPreferences("p", 0)
-        geminiKey = p.getString("gk", "") ?: ""
-        geminiOn = p.getBoolean("go", true)
-        geminiVoice = p.getString("gv", "Kore") ?: "Kore"
-        geminiModel = p.getString("gm", "gemini-2.5-flash-preview-tts") ?: "gemini-2.5-flash-preview-tts"
-    }
-    fun save(c: android.content.Context) {
-        c.getSharedPreferences("p", 0).edit().putString("gk", geminiKey).putString("gv", geminiVoice).putString("gm", geminiModel).putBoolean("go", geminiOn).apply()
-    }
-    @Volatile var read = true
-    @Volatile var listen = true
-    @Volatile var rate = 1.2f
 }

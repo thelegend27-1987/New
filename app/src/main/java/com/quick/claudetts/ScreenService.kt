@@ -27,15 +27,15 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var speaking = 0
-    private lateinit var gemini: GeminiSpeaker
+    private lateinit var gemini: CloudSpeaker
     init {
-        gemini = GeminiSpeaker(
+        gemini = CloudSpeaker(
             onChunkDone = { h.post { chunkFinished(); if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); allDone(); maybeListen() } } },
             onFail = { text ->
                 // Phone voice reads this chunk; block the Gemini worker until done so order is kept.
                 val latch = java.util.concurrent.CountDownLatch(1)
                 fallbackLatch = latch
-                h.post { toastOnce("Gemini failed, phone voice for this bit: " + gemini.lastError); tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "f${System.nanoTime()}") }
+                h.post { toastOnce("Cloud voice failed, phone voice for this bit: " + gemini.lastError); tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "f${System.nanoTime()}") }
                 latch.await(90, java.util.concurrent.TimeUnit.SECONDS)
             }
         )
@@ -76,7 +76,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         lastToast = System.currentTimeMillis()
         android.widget.Toast.makeText(this, m.take(200), android.widget.Toast.LENGTH_LONG).show()
     }
-    private fun useGemini() = Prefs.geminiKey.isNotBlank() && Prefs.geminiOn
+    private fun useGemini() = Prefs.cloudReady()
     private fun say(chunk: String, id: String) {
         if (useGemini()) gemini.enqueue(chunk) else tts?.speak(chunk, TextToSpeech.QUEUE_ADD, null, id)
     }
@@ -389,11 +389,23 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
                 Prefs.listen = !Prefs.listen; if (Prefs.listen) maybeListen() else stopListening(); refresh() },
             btn({ if (Prefs.read) "Read: on" else "Read: off" }) {
                 Prefs.read = !Prefs.read; if (!Prefs.read) { stopSpeech(); speaking = 0; spokenWords.clear() } })
-        row(btn({ if (Prefs.geminiKey.isBlank()) "Voice: phone" else if (Prefs.geminiOn) "Gemini: on" else "Gemini: off" }) {
-                if (Prefs.geminiKey.isNotBlank()) { Prefs.geminiOn = !Prefs.geminiOn; Prefs.save(ctx) } },
-            btn({ "Voice: ${Prefs.geminiVoice}" }) {
-                val i = geminiVoices.indexOf(Prefs.geminiVoice)
-                Prefs.geminiVoice = geminiVoices[(i + 1) % geminiVoices.size]; Prefs.save(ctx) })
+        row(btn({ "Engine: ${Prefs.engine}" }) { Prefs.cycleEngine(); Prefs.save(ctx) },
+            btn({
+                when (Prefs.engine) {
+                    "eleven" -> "Voice: " + (Prefs.elevenVoices.entries.firstOrNull { it.value == Prefs.elevenVoice }?.key ?: "custom")
+                    "gemini" -> "Voice: ${Prefs.geminiVoice}"
+                    else -> "Voice: phone"
+                }
+            }) {
+                if (Prefs.engine == "eleven") {
+                    val ids = Prefs.elevenVoices.values.toList()
+                    Prefs.elevenVoice = ids[(ids.indexOf(Prefs.elevenVoice) + 1) % ids.size]
+                } else if (Prefs.engine == "gemini") {
+                    val i = geminiVoices.indexOf(Prefs.geminiVoice)
+                    Prefs.geminiVoice = geminiVoices[(i + 1) % geminiVoices.size]
+                }
+                Prefs.save(ctx)
+            })
         val speedLabel = android.widget.TextView(ctx).apply { setTextColor(android.graphics.Color.WHITE); textSize = 12f }
         fun speedText() { speedLabel.text = "Speed %.1fx (phone voice)".format(Prefs.rate) }
         speedText()
