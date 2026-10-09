@@ -13,7 +13,7 @@ import java.util.concurrent.LinkedBlockingQueue
 /** Speaks text with Gemini's TTS API (24kHz 16-bit mono PCM). One worker thread, in-order queue. */
 class GeminiSpeaker(
     private val onChunkDone: () -> Unit,           // called (any thread) after each chunk, played or failed
-    private val onFail: (String) -> Unit           // called when a chunk failed, with its text (caller may fall back)
+    private val onFail: (String) -> Unit           // called (worker thread) when a chunk failed after retries; may block while it falls back
 ) {
     private val q = LinkedBlockingQueue<String>()
     @Volatile private var gen = 0
@@ -37,7 +37,19 @@ class GeminiSpeaker(
             val text = item.substringAfter('|')
             if (g != gen) continue
             try {
-                val pcm = fetch(text)
+                lastError = ""
+                var pcm: ByteArray? = null
+                var attempt = 0
+                while (pcm == null) {
+                    try { pcm = fetch(text) }
+                    catch (e: Exception) {
+                        lastError = e.message ?: e.toString()
+                        // retry transient errors (rate limit / server / network) with backoff
+                        if (++attempt >= 4 || g != gen) throw e
+                        Thread.sleep(1500L * attempt)
+                    }
+                }
+                lastError = ""
                 if (g == gen) play(pcm, g)
                 onChunkDone()
             } catch (e: Exception) {

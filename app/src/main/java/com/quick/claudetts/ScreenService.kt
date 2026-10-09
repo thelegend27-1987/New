@@ -29,8 +29,15 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     private var speaking = 0
     private val gemini = GeminiSpeaker(
         onChunkDone = { h.post { if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); maybeListen() } } },
-        onFail = { text -> h.post { toastOnce("Gemini failed, using phone voice: " + gemini.lastError); speaking++; tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "f${System.nanoTime()}") } }
+        onFail = { text ->
+            // Phone voice reads this chunk; block the Gemini worker until done so order is kept.
+            val latch = java.util.concurrent.CountDownLatch(1)
+            fallbackLatch = latch
+            h.post { toastOnce("Gemini failed, phone voice for this bit: " + gemini.lastError); tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "f${System.nanoTime()}") }
+            latch.await(90, java.util.concurrent.TimeUnit.SECONDS)
+        }
     )
+    @Volatile private var fallbackLatch: java.util.concurrent.CountDownLatch? = null
     private var lastToast = 0L
     private fun toastOnce(m: String) {
         if (System.currentTimeMillis() - lastToast < 15000) return
@@ -66,9 +73,13 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         applyVoice()
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
-            override fun onError(id: String?) { done() }
-            override fun onDone(id: String?) { done() }
-            private fun done() = h.post { if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); maybeListen() } }
+            override fun onError(id: String?) { done(id) }
+            override fun onDone(id: String?) { done(id) }
+            private fun done(id: String?) {
+                if (id?.startsWith("f") == true) { fallbackLatch?.countDown(); return }   // Gemini-fallback chunk: not counted
+                finishOne()
+            }
+            private fun finishOne() = h.post { if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); maybeListen() } }
         })
     }
 
@@ -158,7 +169,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         // TTS has a ~4000 char limit per utterance: chunk on sentence-ish boundaries.
         var rest = s
         while (rest.isNotEmpty()) {
-            val lim = if (useGemini()) 350 else 3000
+            val lim = if (useGemini()) 700 else 3000
             val cut = if (rest.length <= lim) rest.length
                 else rest.lastIndexOfAny(charArrayOf('.', '\n', '!', '?'), lim).let { if (it < lim / 6) lim else it + 1 }
             speaking++
