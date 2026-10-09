@@ -22,13 +22,13 @@ class MainActivity : Activity() {
         val sw = Switch(this).apply { text = "Read screen aloud"; isChecked = true }
         sw.setOnCheckedChangeListener { _, c -> Prefs.read = c; if (!c) ScreenService.inst?.stopAll() }
         col.addView(sw)
-        val sw2 = Switch(this).apply { text = "Hands-free voice reply (listens after speaking)"; isChecked = false }
+        val sw2 = Switch(this).apply { text = "Hands-free voice reply (listens after speaking)"; isChecked = true }
         sw2.setOnCheckedChangeListener { _, c -> Prefs.listen = c; if (!c) ScreenService.inst?.stopAll() else ScreenService.inst?.maybeListen() }
         col.addView(sw2)
         btn("Skip / stop speaking") { ScreenService.inst?.stopAll() }
         btn("Re-sync (mark current screen as already read)") { ScreenService.inst?.resync() }
         col.addView(TextView(this).apply {
-            text = "Voice: say your reply. Say 'stop listening' to pause hands-free. Reply is typed into the focused/first text box and Send is tapped."
+            text = "Always listening. Talk; words appear in the Claude text box. End with \"send\" to submit. Say \"clear\" to wipe, \"stop\" to silence reading, \"pause\" to stop listening."
             setTextColor(Color.DKGRAY)
         })
         setContentView(ScrollView(this).apply { addView(col) })
@@ -37,5 +37,5 @@ class MainActivity : Activity() {
 
 object Prefs {
     @Volatile var read = true
-    @Volatile var listen = false
+    @Volatile var listen = true
 }

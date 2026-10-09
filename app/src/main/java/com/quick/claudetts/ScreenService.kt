@@ -43,6 +43,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
 
     override fun onInit(status: Int) {
         ttsReady = status == TextToSpeech.SUCCESS
+        h.postDelayed({ maybeListen() }, 1000)
         tts?.language = Locale.getDefault()
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
@@ -98,6 +99,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
             val cut = if (rest.length <= 3000) rest.length
                 else rest.lastIndexOfAny(charArrayOf('.', '\n', '!', '?'), 3000).let { if (it < 500) 3000 else it + 1 }
             speaking++
+            stopListening()
             tts?.speak(rest.substring(0, cut), TextToSpeech.QUEUE_ADD, null, "u${System.nanoTime()}")
             rest = rest.substring(cut).trim()
         }
@@ -115,6 +117,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     // ---- hands-free listening ----
     fun maybeListen() {
         if (!Prefs.listen || speaking > 0 || listening) return
+        if (checkSelfPermission(android.Manifest.permission.RECORD_AUDIO) != android.content.pm.PackageManager.PERMISSION_GRANTED) return
         if (!SpeechRecognizer.isRecognitionAvailable(this)) return
         listening = true
         sr?.destroy()
@@ -141,6 +144,8 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
             startListening(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
+                putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 3000L)
             })
         }
     }
@@ -150,17 +155,28 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         sr?.cancel(); sr?.destroy(); sr = null
     }
 
+    private val pending = StringBuilder()
+
+    // Continuous dictation: everything you say is appended to the text box; ending with "send" submits.
     private fun handleVoice(text: String) {
-        val t = text.lowercase(Locale.ROOT)
-        when {
-            t == "stop listening" || t == "pause" -> { Prefs.listen = false; speakNow("Paused"); return }
-            t == "stop" || t == "skip" || t == "quiet" -> { tts?.stop(); speaking = 0; maybeListen(); return }
+        val t = text.lowercase(Locale.ROOT).trim().trimEnd('.', ',', '!', '?')
+        when (t) {
+            "stop listening", "pause" -> { Prefs.listen = false; speakNow("Paused"); return }
+            "stop", "skip", "quiet", "be quiet" -> { tts?.stop(); speaking = 0; maybeListen(); return }
+            "cancel", "clear", "never mind", "scratch that" -> { pending.setLength(0); setField(""); maybeListen(); return }
         }
-        val ok = sendToScreen(text)
-        if (!ok) speakNow("Couldn't find the text box")
-        else { // let the response stream in, then it'll be read and we listen again
+        val m = Regex("(?i)^(.*?)[\\s,.!?]*\\bsend( it| message)?[.!?]*$").find(text.trim())
+        val body = if (m != null) m.groupValues[1].trim() else text.trim()
+        if (body.isNotEmpty()) { if (pending.isNotEmpty()) pending.append(' '); pending.append(body) }
+        if (m != null) {
+            if (pending.isEmpty()) { maybeListen(); return }
+            val msg = pending.toString(); pending.setLength(0)
+            if (!submit(msg)) speakNow("Couldn't find the text box")
             h.removeCallbacks(processRunnable); h.postDelayed(processRunnable, 2500)
+        } else {
+            setField(pending.toString())   // show what's been heard so far
         }
+        maybeListen()
     }
 
     private fun speakNow(s: String) { speaking++; tts?.speak(s, TextToSpeech.QUEUE_ADD, null, "n${System.nanoTime()}") }
@@ -180,19 +196,25 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
         return null
     }
 
-    private fun sendToScreen(text: String): Boolean {
-        val root = rootInActiveWindow ?: return false
-        val field = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable } ?: findEditable(root) ?: return false
+    private fun editable(): AccessibilityNodeInfo? {
+        val root = rootInActiveWindow ?: return null
+        return root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable } ?: findEditable(root)
+    }
+
+    private fun setField(text: String): Boolean {
+        val field = editable() ?: return false
+        seen.add(text)
         field.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
         val args = Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, text) }
-        if (!field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)) return false
-        // Mark our own typed text as seen so it isn't read back.
-        seen.add(text)
+        return field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+    }
+
+    private fun submit(text: String): Boolean {
+        if (!setField(text)) return false
         h.postDelayed({
-            val r = rootInActiveWindow
-            val send = findSend(r)
+            val send = findSend(rootInActiveWindow)
             if (send != null) send.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-            else if (Build.VERSION.SDK_INT >= 30) field.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
+            else if (Build.VERSION.SDK_INT >= 30) editable()?.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
         }, 400)
         return true
     }
