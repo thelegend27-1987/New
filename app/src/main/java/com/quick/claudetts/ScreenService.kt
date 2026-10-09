@@ -48,7 +48,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     private fun say(chunk: String, id: String) {
         if (useGemini()) gemini.enqueue(chunk) else tts?.speak(chunk, TextToSpeech.QUEUE_ADD, null, id)
     }
-    private fun stopSpeech() { tts?.stop(); gemini.stop() }
+    private fun stopSpeech() { tts?.stop(); gemini.stop(); fallbackLatch?.countDown() }
     private val spokenWords = HashSet<String>()   // words of what we are currently saying (echo filter)
     private var sr: SpeechRecognizer? = null
     private var listening = false
