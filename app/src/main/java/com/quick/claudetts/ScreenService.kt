@@ -27,7 +27,7 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var speaking = 0
-    private val gemini = GeminiSpeaker(
+    private val gemini: GeminiSpeaker = GeminiSpeaker(
         onChunkDone = { h.post { chunkFinished(); if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); allDone(); maybeListen() } } },
         onFail = { text ->
             // Phone voice reads this chunk; block the Gemini worker until done so order is kept.
