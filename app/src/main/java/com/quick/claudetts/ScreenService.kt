@@ -30,17 +30,16 @@ class ScreenService : AccessibilityService(), TextToSpeech.OnInitListener {
     private lateinit var gemini: GeminiSpeaker
     init {
         gemini = GeminiSpeaker(
-        onChunkDone = { h.post { chunkFinished(); if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); allDone(); maybeListen() } } },
-        onFail = { text ->
-            // Phone voice reads this chunk; block the Gemini worker until done so order is kept.
-            val latch = java.util.concurrent.CountDownLatch(1)
-            fallbackLatch = latch
-            h.post { toastOnce("Gemini failed, phone voice for this bit: " + gemini.lastError); tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "f${System.nanoTime()}") }
-            latch.await(90, java.util.concurrent.TimeUnit.SECONDS)
-        }
-    
+            onChunkDone = { h.post { chunkFinished(); if (speaking > 0) speaking--; if (speaking == 0) { spokenWords.clear(); allDone(); maybeListen() } } },
+            onFail = { text ->
+                // Phone voice reads this chunk; block the Gemini worker until done so order is kept.
+                val latch = java.util.concurrent.CountDownLatch(1)
+                fallbackLatch = latch
+                h.post { toastOnce("Gemini failed, phone voice for this bit: " + gemini.lastError); tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "f${System.nanoTime()}") }
+                latch.await(90, java.util.concurrent.TimeUnit.SECONDS)
+            }
+        )
     }
-)
     // Paragraph tracking so "repeat" can replay the paragraph being spoken, then carry on with the rest.
     private val paras = ArrayList<Pair<String, Int>>()   // cleaned text, number of audio chunks
     private var doneChunks = 0
